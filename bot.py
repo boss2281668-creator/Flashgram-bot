@@ -1,22 +1,18 @@
 import asyncio
 import aiohttp
-import ssl
 
-BOT_TOKEN = "1780244435:7jxPw_XahYYBhjhLd_Z2dkCosT6C59xVq2J"
+# ===== ТВОЙ СТАРЫЙ ТОКЕН (если он от FlashGram) =====
+FLASHGRAM_BOT_TOKEN = "1780244435:7jxPw_XahYYBhjhLd_Z2dkCosT6C59xVq2J"
+API_BASE = "http://31.76.29.36:8081"
 MINIAPP_URL = "https://starlit-nougat-e91801.netlify.app"
 
-API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
-ssl_context = ssl.create_default_context()
-ssl_context.check_hostname = False
-ssl_context.verify_mode = ssl.CERT_NONE
-
 async def send_message(chat_id, text, reply_markup=None):
-    url = f"{API_URL}/sendMessage"
+    url = f"{API_BASE}/bot{FLASHGRAM_BOT_TOKEN}/sendMessage"
     payload = {"chat_id": chat_id, "text": text}
     if reply_markup:
         payload["reply_markup"] = reply_markup
     async with aiohttp.ClientSession() as session:
-        async with session.post(url, json=payload, ssl=ssl_context) as resp:
+        async with session.post(url, json=payload) as resp:
             return await resp.json()
 
 async def handle_update(update):
@@ -37,9 +33,9 @@ async def poll_updates():
     async with aiohttp.ClientSession() as session:
         while True:
             try:
-                url = f"{API_URL}/getUpdates"
+                url = f"{API_BASE}/bot{FLASHGRAM_BOT_TOKEN}/getUpdates"
                 params = {"offset": offset, "timeout": 30}
-                async with session.get(url, params=params, ssl=ssl_context) as resp:
+                async with session.get(url, params=params) as resp:
                     data = await resp.json()
                     if data.get("ok"):
                         for update in data["result"]:
@@ -53,5 +49,5 @@ async def poll_updates():
                 await asyncio.sleep(2)
 
 if __name__ == "__main__":
-    print("Бот запущен.")
+    print("Бот запущен (FlashGram).")
     asyncio.run(poll_updates())
