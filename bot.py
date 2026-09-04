@@ -1,10 +1,9 @@
 import asyncio
 import aiohttp
 
-# ===== ТВОЙ СТАРЫЙ ТОКЕН (если он от FlashGram) =====
-FLASHGRAM_BOT_TOKEN = "1780244435:7jxPw_XahYYBhjhLd_Z2dkCosT6C59xVq2J"
+FLASHGRAM_BOT_TOKEN = "1780244435:7jxPw_XahYYBhjhLd_Z2dkCosT6C59xVq2J"  # твой токен
 API_BASE = "http://31.76.29.36:8081"
-MINIAPP_URL = "https://starlit-nougat-e91801.netlify.app"
+MINIAPP_URL = "https://fastidious-froyo-488a06.netlify.app"
 
 async def send_message(chat_id, text, reply_markup=None):
     url = f"{API_BASE}/bot{FLASHGRAM_BOT_TOKEN}/sendMessage"
