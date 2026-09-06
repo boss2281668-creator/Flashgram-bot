@@ -1,16 +1,10 @@
 import asyncio
 import aiohttp
-import json
 
-# ===== НАСТРОЙКИ =====
 FLASHGRAM_BOT_TOKEN = "1780244829:fi5IEFAljHni0Iy7NlVrXLnz5LFxglS7TPn"
 API_BASE = "http://31.76.29.36:8081"
-ADMIN_CHAT_ID = 1780243448
+MINIAPP_URL = "https://fastidious-froyo-488a06.netlify.app"  # или другая старая ссылка
 
-# ⬇️ ИЗМЕНИ ССЫЛКУ ЗДЕСЬ НА НУЖНУЮ
-MINIAPP_URL = "https://fastidious-froyo-488a06.netlify.app"  # ← ПОСТАВЬ СЮДА СТАРУЮ ССЫЛКУ
-
-# ===== ОСТАЛЬНОЙ КОД БЕЗ ИЗМЕНЕНИЙ =====
 async def send_message(chat_id, text, reply_markup=None):
     url = f"{API_BASE}/bot{FLASHGRAM_BOT_TOKEN}/sendMessage"
     payload = {"chat_id": chat_id, "text": text}
@@ -25,7 +19,6 @@ async def handle_update(update):
         msg = update["message"]
         chat_id = msg["chat"]["id"]
         text = msg.get("text", "")
-
         if text == "/start":
             keyboard = {
                 "inline_keyboard": [
@@ -33,26 +26,8 @@ async def handle_update(update):
                 ]
             }
             await send_message(chat_id, "Нажми кнопку, чтобы запустить мини-апп:", reply_markup=keyboard)
-            return
-
-        if "web_app_data" in msg:
-            data = json.loads(msg["web_app_data"]["data"])
-            action = data.get("action")
-            user_id = data.get("userId")
-            username = data.get("username", "Без имени")
-
-            if action == "new_user":
-                await send_message(ADMIN_CHAT_ID, f"Новый игрок: {username} (ID {user_id})")
-
-            elif action == "withdraw":
-                if data.get("type") == "stars":
-                    amount = data.get("amount")
-                    commission = data.get("commission")
-                    text_msg = f"Заявка на вывод: {username} (ID {user_id})\nЗвёзды: {amount}⭐ (комиссия {commission}⭐)"
-                else:
-                    gift_name = data.get("giftName")
-                    text_msg = f"Заявка на вывод: {username} (ID {user_id})\nПодарок: {gift_name}"
-                await send_message(ADMIN_CHAT_ID, text_msg)
+        else:
+            await send_message(chat_id, f"Ты написал: {text}")
 
 async def poll_updates():
     offset = 0
