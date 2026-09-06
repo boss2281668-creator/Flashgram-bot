@@ -4,7 +4,7 @@ import json
 import logging
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
 from aiogram.client.default import DefaultBotProperties
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.client.telegram import TelegramAPIServer
@@ -13,15 +13,15 @@ from aiogram.enums import ParseMode
 # ===== КОНФИГ =====
 FLASHGRAM_BOT_TOKEN = "1780244829:fi5IEFAljHni0Iy7NlVrXLnz5LFxglS7TPn"
 API_BASE = "http://31.76.29.36:8081"
-ADMIN_ID = 1780243448  # твой Telegram ID (число)
-MINIAPP_URL = "https://harmony-fudge-de7464.netlify.app"  # НОВАЯ ССЫЛКА
+ADMIN_ID = 1780243448  # твой Telegram ID
+MINIAPP_URL = "https://harmony-fudge-de7464.netlify.app"
 
 # ===== НАСТРОЙКА БОТА =====
 session = AiohttpSession(api=TelegramAPIServer.from_base(API_BASE))
 bot = Bot(token=FLASHGRAM_BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML), session=session)
 dp = Dispatcher()
 
-# ===== FIREBASE URL =====
+# ===== FIREBASE =====
 FIREBASE_URL = "https://nft-app-8eda5-default-rtdb.firebaseio.com"
 
 async def firebase_update(path, data):
@@ -40,11 +40,10 @@ async def firebase_get(path):
 @dp.message(Command("start"))
 async def start_cmd(message: types.Message):
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🚀 Открыть апгрейдер", web_app=types.WebAppInfo(url=MINIAPP_URL))]
+        [InlineKeyboardButton(text="🚀 Открыть апгрейдер", web_app=WebAppInfo(url=MINIAPP_URL))]
     ])
     await message.answer("Нажми кнопку, чтобы запустить мини-апп:", reply_markup=keyboard)
 
-# Обработка данных из веб-аппа
 @dp.message(lambda msg: msg.web_app_data is not None)
 async def web_app_data_handler(message: types.Message):
     data = json.loads(message.web_app_data.data)
@@ -53,11 +52,9 @@ async def web_app_data_handler(message: types.Message):
     username = data.get('username', 'Без имени')
 
     if action == 'new_user':
-        # Уведомление о новом игроке
         await bot.send_message(ADMIN_ID, f"Новый игрок: {username} (ID {user_id})")
 
     elif action == 'withdraw':
-        # Заявка на вывод – получаем номер заявки
         requests = await firebase_get('withdrawRequests')
         count = len(requests) if requests else 0
         number = count + 1
@@ -70,7 +67,6 @@ async def web_app_data_handler(message: types.Message):
             gift_name = data.get('giftName')
             text = f"Заявка #{number}: {username} (ID {user_id})\nПодарок: {gift_name}"
 
-        # Кнопки
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [
                 InlineKeyboardButton(text="✅ Подтвердить", callback_data=f"confirm_{number}"),
@@ -79,9 +75,8 @@ async def web_app_data_handler(message: types.Message):
         ])
         await bot.send_message(ADMIN_ID, text, reply_markup=keyboard)
 
-# Обработка нажатий на кнопки
 @dp.callback_query()
-async def callback_handler(callback: CallbackQuery):
+async def callback_handler(callback: types.CallbackQuery):
     data = callback.data
     if data.startswith('confirm_') or data.startswith('reject_'):
         parts = data.split('_')
