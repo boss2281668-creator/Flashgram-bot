@@ -4,8 +4,8 @@ import json
 
 FLASHGRAM_BOT_TOKEN = "1780244829:fi5IEFAljHni0Iy7NlVrXLnz5LFxglS7TPn"
 API_BASE = "http://31.76.29.36:8081"
-ADMIN_ID = 1780243448  # твой ID
-MINIAPP_URL = "https://harmony-fudge-de7464.netlify.app"
+ADMIN_ID = 1780243448
+MINIAPP_URL = "https://harmonious-fudge-de7464.netlify.app"  # НОВАЯ ССЫЛКА
 FIREBASE_URL = "https://nft-app-8eda5-default-rtdb.firebaseio.com"
 
 async def send_message(chat_id, text, reply_markup=None):
@@ -60,7 +60,6 @@ async def handle_update(update):
             await send_message(chat_id, "Нажми кнопку, чтобы запустить мини-апп:", reply_markup=keyboard)
             return
 
-        # Данные из веб-аппа
         if "web_app_data" in msg:
             data = json.loads(msg["web_app_data"]["data"])
             action = data.get("action")
@@ -93,7 +92,6 @@ async def handle_update(update):
                 }
                 await send_message(ADMIN_ID, text_msg, reply_markup=keyboard)
 
-    # Обработка callback_query
     if "callback_query" in update:
         cb = update["callback_query"]
         cb_id = cb["id"]
@@ -129,7 +127,6 @@ async def handle_update(update):
             await firebase_update(f"withdrawRequests/{key}", {"status": status})
 
             await answer_callback(cb_id, f"Заявка #{number} {'подтверждена' if action_type == 'confirm' else 'отклонена'}")
-            # Убираем кнопки
             await edit_message_reply_markup(chat_id, message_id, reply_markup={"inline_keyboard": []})
             await send_message(ADMIN_ID, f"Заявка #{number} {status}")
 
