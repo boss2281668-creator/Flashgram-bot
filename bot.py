@@ -8,7 +8,7 @@ from datetime import datetime
 # ===== КОНФИГ =====
 TOKEN = "1780244966:X-2yDGvIo695duDq3Ppr6eIP4kuCL2GntKv"
 API_BASE = "http://31.76.29.36:8081"
-ADMIN_ID = 1780243448
+ADMIN_ID = 1780243448  # главный админ
 FIREBASE_URL = "https://nft-app-8eda5-default-rtdb.firebaseio.com"
 
 # ===== КЛАВИАТУРА =====
@@ -68,9 +68,18 @@ async def firebase_delete(path):
         async with sess.delete(url) as resp:
             return await resp.json()
 
-def is_admin(user_id):
-    return user_id == str(ADMIN_ID)
+# ===== ПРОВЕРКА ДОСТУПА =====
+async def is_admin(user_id):
+    # Главный админ всегда имеет доступ
+    if user_id == str(ADMIN_ID):
+        return True
+    # Проверяем список разрешённых в Firebase
+    allowed = await firebase_get("allowed_users")
+    if allowed and user_id in allowed:
+        return True
+    return False
 
+# ===== ПАРСИНГ ДАТЫ =====
 def parse_date(text):
     text = text.strip()
     formats = [
@@ -88,14 +97,13 @@ def parse_date(text):
     return None
 
 def format_date(dt):
-    """Преобразует дату в строку для отображения, поддерживает строки и объекты datetime"""
     if not dt:
         return None
     if isinstance(dt, str):
         try:
             dt = datetime.fromisoformat(dt)
         except:
-            return dt  # если не удалось, возвращаем как есть
+            return dt
     if isinstance(dt, datetime):
         return dt.strftime("%d.%m.%Y %H:%M")
     return str(dt)
@@ -214,6 +222,52 @@ async def handle_update(update):
                               reply_markup=MAIN_KEYBOARD)
             return
 
+        # ---- Управление доступом (только для главного админа) ----
+        if user_id == str(ADMIN_ID):
+            # Добавить админа
+            if text.startswith("/add_admin"):
+                parts = text.split()
+                if len(parts) < 2:
+                    await send_message(chat_id, "❌ Укажите ID: `/add_admin 123456789`")
+                    return
+                new_admin = parts[1].strip()
+                # Сохраняем в Firebase
+                allowed = await firebase_get("allowed_users") or {}
+                allowed[new_admin] = True
+                await firebase_set("allowed_users", allowed)
+                await send_message(chat_id, f"✅ Пользователь {new_admin} теперь имеет доступ к админ-командам.")
+                return
+
+            # Удалить админа
+            if text.startswith("/remove_admin"):
+                parts = text.split()
+                if len(parts) < 2:
+                    await send_message(chat_id, "❌ Укажите ID: `/remove_admin 123456789`")
+                    return
+                rm_admin = parts[1].strip()
+                allowed = await firebase_get("allowed_users") or {}
+                if rm_admin in allowed:
+                    del allowed[rm_admin]
+                    await firebase_set("allowed_users", allowed)
+                    await send_message(chat_id, f"✅ Пользователь {rm_admin} удалён из списка админов.")
+                else:
+                    await send_message(chat_id, f"❌ Пользователь {rm_admin} не найден в списке.")
+                return
+
+            # Список админов
+            if text == "/list_admins":
+                allowed = await firebase_get("allowed_users") or {}
+                if not allowed:
+                    await send_message(chat_id, "📋 Список разрешённых пользователей пуст.")
+                else:
+                    ids = list(allowed.keys())
+                    out = "📋 Разрешённые пользователи:\n" + "\n".join(ids)
+                    await send_message(chat_id, out)
+                return
+
+        # ---- Проверка доступа для остальных команд ----
+        is_admin_user = await is_admin(user_id)
+
         # ---- /join contest_id ----
         if text.startswith("/join"):
             parts = text.split()
@@ -238,13 +292,13 @@ async def handle_update(update):
             return
 
         # ---- /clear_contests (админ) ----
-        if text == "/clear_contests" and is_admin(user_id):
+        if text == "/clear_contests" and is_admin_user:
             await firebase_delete("contests")
             await send_message(chat_id, "🗑 Все конкурсы удалены.")
             return
 
         # ---- /results (админ) ----
-        if text.startswith("/results") and is_admin(user_id):
+        if text.startswith("/results") and is_admin_user:
             parts = text.split()
             if len(parts) < 2:
                 await send_message(chat_id, "❌ Укажите ID конкурса: `/results contest_id`")
@@ -294,8 +348,8 @@ async def handle_update(update):
             await show_channels(chat_id, user_id)
             return
 
-        # ---- Создание конкурса (пошаговое) ----
-        if user_id in user_states and user_states.get(user_id, {}).get("mode") == "create_contest":
+        # ---- Создание конкурса (пошаговое, доступно только админам) ----
+        if is_admin_user and user_id in user_states and user_states.get(user_id, {}).get("mode") == "create_contest":
             state = user_states[user_id]
             step = state.get("step")
             data = state.get("data", {})
@@ -433,7 +487,7 @@ async def handle_update(update):
 
         # ===== КНОПКИ МЕНЮ =====
         if text == "🎯 Создать конкурс":
-            if not is_admin(user_id):
+            if not await is_admin(user_id):
                 await send_message(chat_id, "❌ У вас нет прав для создания конкурсов.")
                 return
             user_states[user_id] = {"mode": "create_contest", "step": "text", "data": {}}
@@ -451,7 +505,7 @@ async def handle_update(update):
                 return
             user_contests = {}
             for cid, cdata in contests.items():
-                if user_id == str(ADMIN_ID):
+                if user_id == str(ADMIN_ID) or user_id in await firebase_get("allowed_users") or {}:
                     user_contests[cid] = cdata
                 elif user_id in cdata.get("participants", {}):
                     user_contests[cid] = cdata
