@@ -70,10 +70,8 @@ async def firebase_delete(path):
 
 # ===== ПРОВЕРКА ДОСТУПА =====
 async def is_admin(user_id):
-    # Главный админ всегда имеет доступ
     if user_id == str(ADMIN_ID):
         return True
-    # Проверяем список разрешённых в Firebase
     allowed = await firebase_get("allowed_users")
     if allowed and user_id in allowed:
         return True
@@ -231,7 +229,6 @@ async def handle_update(update):
                     await send_message(chat_id, "❌ Укажите ID: `/add_admin 123456789`")
                     return
                 new_admin = parts[1].strip()
-                # Сохраняем в Firebase
                 allowed = await firebase_get("allowed_users") or {}
                 allowed[new_admin] = True
                 await firebase_set("allowed_users", allowed)
@@ -503,9 +500,11 @@ async def handle_update(update):
             if not contests:
                 await send_message(chat_id, "❌ Конкурсов пока нет.")
                 return
+            # Получаем список разрешённых пользователей для проверки
+            allowed_users = await firebase_get("allowed_users") or {}
             user_contests = {}
             for cid, cdata in contests.items():
-                if user_id == str(ADMIN_ID) or user_id in await firebase_get("allowed_users") or {}:
+                if user_id == str(ADMIN_ID) or user_id in allowed_users:
                     user_contests[cid] = cdata
                 elif user_id in cdata.get("participants", {}):
                     user_contests[cid] = cdata
