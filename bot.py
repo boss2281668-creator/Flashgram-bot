@@ -4,7 +4,7 @@ import json
 import random
 from datetime import datetime, timedelta
 
-TOKEN = "1780244992:gAQGJLrrsLq_oDxb7prbZaKqWX6Z5C5zI8j"  # ❗ Замени на новый через @BotFather
+TOKEN = "1780244992:JTLJRwQM5F_dUbEG4WauZBYznNqSFNzmnE5"  # ❗ Замени на новый через @BotFather
 API_BASE = "http://31.76.29.36:8081"
 FIREBASE_URL = "https://nft-app-8eda5-default-rtdb.firebaseio.com"
 
