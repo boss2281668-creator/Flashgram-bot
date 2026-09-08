@@ -2,47 +2,87 @@ import asyncio
 import aiohttp
 import json
 import random
-import re
-from datetime import datetime
+from datetime import datetime, timedelta
 
-# ===== КОНФИГ =====
-TOKEN = "1780244966:X-2yDGvIo695duDq3Ppr6eIP4kuCL2GntKv"
+TOKEN = "1780244992:gAQGJLrrsLq_oDxb7prbZaKqWX6Z5C5zI8j"  # ❗ Замени на новый через @BotFather
 API_BASE = "http://31.76.29.36:8081"
-ADMIN_ID = 1780243448  # главный админ
 FIREBASE_URL = "https://nft-app-8eda5-default-rtdb.firebaseio.com"
 
-# ===== КЛАВИАТУРА =====
-MAIN_KEYBOARD = {
-    "keyboard": [
-        ["🎯 Создать конкурс", "📋 Мои конкурсы"],
-        ["📢 Мои каналы/чаты", "🆘 Служба поддержки"]
-    ],
-    "resize_keyboard": True,
-    "one_time_keyboard": False
+ADMIN_IDS = ["1780243448", "1780243287"]
+
+BONUS_AMOUNT_GRAM = 5000
+BONUS_INTERVAL_HOURS = 12
+EARN_AMOUNT_GRAM = 2500
+CRON_TO_GRAM = 10000
+VIP_DURATION_DAYS = 7
+
+VIP_PRICES = {
+    "Gold": 100,
+    "Diamond": 250,
+    "Rich": 500
 }
 
-# ===== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ =====
-async def send_message(chat_id, text, reply_markup=None, parse_mode=None):
+VIP_BONUSES = {
+    "Gold": {"cron": 5, "gram": 10000, "luck": 0.05, "cooldown": 8},
+    "Diamond": {"cron": 15, "gram": 25000, "luck": 0.10, "cooldown": 4},
+    "Rich": {"cron": 25, "gram": 50000, "luck": 0.15, "cooldown": 2}
+}
+
+GAMES = {
+    "basketball": {
+        "name": "🏀 Баскетбол",
+        "keywords": ["бас", "баскетбол"],
+        "success_stickers": ["🏀🔥", "🏀💥", "🏀⭐"],
+        "fail_stickers": ["🏀💔", "🏀❌", "🏀😢"]
+    },
+    "football": {
+        "name": "⚽ Футбол",
+        "keywords": ["фут", "футбол"],
+        "success_stickers": ["⚽🔥", "⚽💥", "⚽⭐"],
+        "fail_stickers": ["⚽💔", "⚽❌", "⚽😢"]
+    },
+    "tennis": {
+        "name": "🎾 Теннис",
+        "keywords": ["тенис", "теннис"],
+        "success_stickers": ["🎾🔥", "🎾💥", "🎾⭐"],
+        "fail_stickers": ["🎾💔", "🎾❌", "🎾😢"]
+    },
+    "darts": {
+        "name": "🎯 Дартс",
+        "keywords": ["дартс", "дарц"],
+        "success_stickers": ["🎯🔥", "🎯💥", "🎯⭐"],
+        "fail_stickers": ["🎯💔", "🎯❌", "🎯😢"]
+    }
+}
+
+CHANNELS = [
+    {"name": "CronChannel", "id": "-1001234567890"}
+]
+
+CHAT_LINK = "https://t.me/CronChat"
+
+def get_main_keyboard(user_id):
+    keyboard = [
+        ["👤 Профиль", "📋 Команды", "🏆 Топ"],
+        ["💎 Донат", "💸 Перевести", "🎮 Игры"],
+        ["🎁 Бонус", "💬 Чаты", "💰 Заработать"]
+    ]
+    if is_admin(user_id):
+        keyboard.insert(2, ["⚙️ Админ панель"])
+    return {"keyboard": keyboard, "resize_keyboard": True, "one_time_keyboard": False}
+
+async def send_message(chat_id, text, reply_markup=None):
     url = f"{API_BASE}/bot{TOKEN}/sendMessage"
     payload = {"chat_id": chat_id, "text": text}
     if reply_markup:
         payload["reply_markup"] = reply_markup
-    if parse_mode:
-        payload["parse_mode"] = parse_mode
-    async with aiohttp.ClientSession() as session:
-        async with session.post(url, json=payload) as resp:
-            return await resp.json()
-
-async def send_photo(chat_id, photo, caption=None, reply_markup=None):
-    url = f"{API_BASE}/bot{TOKEN}/sendPhoto"
-    payload = {"chat_id": chat_id, "photo": photo}
-    if caption:
-        payload["caption"] = caption
-    if reply_markup:
-        payload["reply_markup"] = reply_markup
-    async with aiohttp.ClientSession() as session:
-        async with session.post(url, json=payload) as resp:
-            return await resp.json()
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, json=payload) as resp:
+                return await resp.json()
+    except Exception as e:
+        print(f"[ERROR] send_message failed: {e}")
+        return None
 
 async def firebase_get(path):
     async with aiohttp.ClientSession() as sess:
@@ -56,630 +96,746 @@ async def firebase_set(path, data):
         async with sess.put(url, json=data) as resp:
             return await resp.json()
 
-async def firebase_push(path, data):
-    async with aiohttp.ClientSession() as sess:
-        url = f"{FIREBASE_URL}/{path}.json"
-        async with sess.post(url, json=data) as resp:
-            return await resp.json()
-
 async def firebase_delete(path):
     async with aiohttp.ClientSession() as sess:
         url = f"{FIREBASE_URL}/{path}.json"
         async with sess.delete(url) as resp:
             return await resp.json()
 
-# ===== ПРОВЕРКА ДОСТУПА =====
-async def is_admin(user_id):
-    if user_id == str(ADMIN_ID):
-        return True
-    allowed = await firebase_get("allowed_users")
-    if allowed and user_id in allowed:
-        return True
-    return False
-
-# ===== ПАРСИНГ ДАТЫ =====
-def parse_date(text):
-    text = text.strip()
-    formats = [
-        "%d.%m.%Y %H:%M", "%d.%m.%Y",
-        "%d/%m/%Y %H:%M", "%d/%m/%Y",
-        "%Y-%m-%d %H:%M", "%Y-%m-%d",
-        "%d.%m.%Y %H:%M:%S", "%d/%m/%Y %H:%M:%S"
-    ]
-    for fmt in formats:
+# ---------- Проверка истечения VIP ----------
+async def check_vip_expiry(user_data):
+    vip_until = user_data.get("vip_until")
+    if vip_until:
         try:
-            dt = datetime.strptime(text, fmt)
-            return dt
-        except ValueError:
-            continue
-    return None
-
-def format_date(dt):
-    if not dt:
-        return None
-    if isinstance(dt, str):
-        try:
-            dt = datetime.fromisoformat(dt)
+            until = datetime.fromisoformat(vip_until)
+            if datetime.now() > until:
+                user_data["vip"] = None
+                user_data["vip_until"] = None
+                user_data["last_vip_claim"] = None
         except:
-            return dt
-    if isinstance(dt, datetime):
-        return dt.strftime("%d.%m.%Y %H:%M")
-    return str(dt)
+            user_data["vip"] = None
+            user_data["vip_until"] = None
+            user_data["last_vip_claim"] = None
+    return user_data
 
-# ===== ЛИСТ КАНАЛОВ =====
-async def show_channels(chat_id, user_id):
-    channels_data = await firebase_get(f"channels/{user_id}/list")
-    if not channels_data:
-        text = "📢 У вас пока нет добавленных каналов/чатов.\n\n"
-        text += "💡 Инструкция:\n"
-        text += "1. Добавьте бота в канал/чат как администратора с правом публикации.\n"
-        text += "2. Нажмите «➕ Добавить канал» и отправьте боту @channelname\n"
-        text += "   или перешлите любое сообщение из приватного канала.\n\n"
-        text += "⚠️ Для групп (чатов) выдайте боту право писать в них."
+async def get_user_data(user_id, username=None):
+    data = await firebase_get(f"users/{user_id}")
+    if not data:
+        data = {
+            "balance_cron": 0,
+            "balance_gram": 100,
+            "vip": None,
+            "vip_until": None,
+            "last_vip_claim": None,
+            "last_bonus": None,
+            "earned_channels": {},
+            "username": username or "Без имени"
+        }
+        await firebase_set(f"users/{user_id}", data)
     else:
-        text = "📢 Ваши каналы/чаты:\n\n"
-        sorted_items = sorted(channels_data.items(), key=lambda x: x[1].get("added_at", ""))
-        for idx, (cid, cdata) in enumerate(sorted_items, 1):
-            name = cdata.get("name", "Без названия")
-            ctype = cdata.get("type", "канал")
-            text += f"{idx}. {name} ({ctype})\n"
+        data = await check_vip_expiry(data)
+        if username and data.get("username") != username:
+            data["username"] = username
+            await firebase_set(f"users/{user_id}", data)
+    return data
 
-    keyboard = {
-        "inline_keyboard": [
-            [{"text": "➕ Добавить канал", "callback_data": "add_channel"}],
-            [{"text": "➕ Добавить группу", "callback_data": "add_group"}]
-        ]
-    }
-    if channels_data:
-        row = []
-        for cid, cdata in channels_data.items():
-            row.append({"text": f"✖️ {cdata.get('name', '')}", "callback_data": f"del_channel_{cid}"})
-        if row:
-            keyboard["inline_keyboard"].append(row[:3])
-            if len(row) > 3:
-                keyboard["inline_keyboard"].append(row[3:6])
+async def update_user_data(user_id, data):
+    await firebase_set(f"users/{user_id}", data)
 
-    await send_message(chat_id, text, reply_markup=keyboard)
+async def check_subscription(user_id, channel_id):
+    url = f"{API_BASE}/bot{TOKEN}/getChatMember"
+    payload = {"chat_id": channel_id, "user_id": user_id}
+    async with aiohttp.ClientSession() as session:
+        async with session.post(url, json=payload) as resp:
+            data = await resp.json()
+            if data.get("ok"):
+                status = data["result"].get("status")
+                return status in ("member", "administrator", "creator")
+            return False
 
-# ===== ПУБЛИКАЦИЯ КОНКУРСА =====
-async def publish_contest(chat_id, user_id, contest_data):
-    result = await firebase_push("contests", contest_data)
-    contest_id = result["name"]
-
-    text = f"🎯 **Новый конкурс!**\n\n"
-    text += f"{contest_data['text']}\n\n"
-    if contest_data.get('date_start'):
-        text += f"📅 Начало: {format_date(contest_data['date_start'])}\n"
-    if contest_data.get('date_end'):
-        text += f"⏳ Окончание: {format_date(contest_data['date_end'])}\n"
-    text += f"🏆 Победителей: {contest_data['winners_count']}\n"
-    text += f"🎁 Призы: {contest_data['prize']}\n\n"
-    text += f"ID: `{contest_id}`\n"
-    text += f"Участвовать: напишите боту `/join {contest_id}` или нажмите кнопку ниже."
-
-    button_text = contest_data.get('button_text', 'Участвовать')
-    keyboard = {
-        "inline_keyboard": [
-            [{"text": f"🎯 {button_text}", "callback_data": f"join_{contest_id}"}]
-        ]
-    }
-
-    channel_id = contest_data.get('channel_id')
-    if channel_id:
-        channels = await firebase_get(f"channels/{user_id}/list")
-        if channels and channel_id in channels:
-            channel_name = channels[channel_id].get("name")
-            if not channel_name.startswith('@'):
-                channel_name = '@' + channel_name
-            try:
-                if contest_data.get('media_type') == "photo":
-                    await send_photo(channel_name, contest_data['media_id'], caption=text, reply_markup=keyboard)
-                else:
-                    await send_message(channel_name, text, parse_mode="Markdown", reply_markup=keyboard)
-                await send_message(chat_id, f"✅ Конкурс опубликован в канале {channel_name}!")
-                return contest_id
-            except Exception as e:
-                await send_message(chat_id, f"❌ Ошибка публикации в канал: {e}\nПубликую в личку.")
-                # публикуем в личку
-                if contest_data.get('media_type') == "photo":
-                    await send_photo(chat_id, contest_data['media_id'], caption=text, reply_markup=keyboard)
-                else:
-                    await send_message(chat_id, text, parse_mode="Markdown", reply_markup=keyboard)
-                await send_message(chat_id, "✅ Конкурс опубликован здесь, в личных сообщениях.")
-                return contest_id
-
-    # Публикуем в личку
-    if contest_data.get('media_type') == "photo":
-        await send_photo(chat_id, contest_data['media_id'], caption=text, reply_markup=keyboard)
+async def apply_vip_bonuses(user_id, user_data):
+    user_data = await check_vip_expiry(user_data)
+    vip = user_data.get("vip")
+    if not vip:
+        return user_data, None
+    vip_info = VIP_BONUSES.get(vip)
+    if not vip_info:
+        return user_data, None
+    last_claim = user_data.get("last_vip_claim")
+    now = datetime.now()
+    if last_claim:
+        try:
+            last_time = datetime.fromisoformat(last_claim)
+        except:
+            last_time = now - timedelta(hours=vip_info["cooldown"])
     else:
-        await send_message(chat_id, text, parse_mode="Markdown", reply_markup=keyboard)
-    await send_message(chat_id, "✅ Конкурс опубликован здесь, в личных сообщениях.")
-    return contest_id
+        last_time = now - timedelta(hours=vip_info["cooldown"])
+    if (now - last_time) >= timedelta(hours=vip_info["cooldown"]):
+        user_data["balance_cron"] = user_data.get("balance_cron", 0) + vip_info["cron"]
+        user_data["balance_gram"] = user_data.get("balance_gram", 0) + vip_info["gram"]
+        user_data["last_vip_claim"] = now.isoformat()
+        return user_data, {"cron": vip_info["cron"], "gram": vip_info["gram"], "vip": vip}
+    return user_data, None
 
-# ===== ОБРАБОТЧИК ОБНОВЛЕНИЙ =====
-user_states = {}
+def is_admin(user_id):
+    return user_id in ADMIN_IDS
+
+async def get_top_users(limit=10):
+    users = await firebase_get("users")
+    if not users:
+        return []
+    filtered = []
+    for uid, data in users.items():
+        if uid in ADMIN_IDS:
+            continue
+        cron = data.get("balance_cron", 0)
+        gram = data.get("balance_gram", 0)
+        username = data.get("username", uid)
+        filtered.append({"id": uid, "username": username, "cron": cron, "gram": gram})
+    sorted_users = sorted(filtered, key=lambda x: x["gram"], reverse=True)
+    return sorted_users[:limit]
+
+ADMIN_PANEL = {
+    "inline_keyboard": [
+        [{"text": "💰 Выдать cron", "callback_data": "admin_give_cron"}],
+        [{"text": "💰 Забрать cron", "callback_data": "admin_take_cron"}],
+        [{"text": "💰 Выдать gram", "callback_data": "admin_give_gram"}],
+        [{"text": "💰 Забрать gram", "callback_data": "admin_take_gram"}],
+        [{"text": "📋 Список пользователей", "callback_data": "admin_users"}],
+        [{"text": "🔥 Снести БД", "callback_data": "admin_delete_db"}],
+        [{"text": "❌ Закрыть", "callback_data": "admin_close"}]
+    ]
+}
+
+# ---------- ИСПРАВЛЕННАЯ ИГРА (один стикер, защита ставок) ----------
+async def play_game(chat_id, user_id, game_key, bet):
+    game = GAMES.get(game_key)
+    if not game:
+        await send_message(chat_id, "❌ Игра не найдена.")
+        return
+
+    if bet <= 0:
+        await send_message(chat_id, "❌ Ставка должна быть положительным числом.")
+        return
+
+    user_data = await get_user_data(user_id)
+    bal_gram = user_data.get("balance_gram", 0)
+    if bal_gram < bet:
+        await send_message(chat_id, f"❌ Недостаточно gram для ставки (нужно {bet}).")
+        return
+
+    user_data["balance_gram"] = bal_gram - bet
+    await update_user_data(user_id, user_data)
+
+    vip = user_data.get("vip")
+    luck_bonus = VIP_BONUSES[vip]["luck"] if vip in VIP_BONUSES else 0
+    base_chance = 0.5
+    total_chance = min(base_chance + luck_bonus, 0.95)
+    win = random.random() < total_chance
+
+    if win:
+        sticker = random.choice(game["success_stickers"])
+        win_amount = bet * 2
+        user_data["balance_gram"] = user_data.get("balance_gram", 0) + win_amount
+        await update_user_data(user_id, user_data)
+        result_text = f"🏆 Ты победил!\n💰 Выигрыш: +{win_amount} gram\n🍀 VIP-бонус: +{int(luck_bonus*100)}%"
+    else:
+        sticker = random.choice(game["fail_stickers"])
+        result_text = f"❌ Ты проиграл.\n💰 Потеряно: {bet} gram\n🍀 VIP-бонус: +{int(luck_bonus*100)}%"
+
+    await send_message(chat_id, sticker)
+    await send_message(chat_id, f"{game['name']}\n\n{result_text}")
+
+# ---------- НОВАЯ ФУНКЦИЯ ПЕРЕВОДА ----------
+async def transfer_funds(sender_id, receiver_id, currency, amount):
+    if sender_id == receiver_id:
+        return False, "❌ Нельзя перевести самому себе."
+
+    if amount <= 0:
+        return False, "❌ Сумма должна быть положительной."
+
+    sender_data = await get_user_data(sender_id)
+    receiver_data = await get_user_data(receiver_id)
+
+    if currency == "cron":
+        bal = sender_data.get("balance_cron", 0)
+        if bal < amount:
+            return False, f"❌ Недостаточно cron. У тебя {bal} cron."
+        sender_data["balance_cron"] = bal - amount
+        receiver_data["balance_cron"] = receiver_data.get("balance_cron", 0) + amount
+    elif currency == "gram":
+        bal = sender_data.get("balance_gram", 0)
+        if bal < amount:
+            return False, f"❌ Недостаточно gram. У тебя {bal} gram."
+        sender_data["balance_gram"] = bal - amount
+        receiver_data["balance_gram"] = receiver_data.get("balance_gram", 0) + amount
+    else:
+        return False, "❌ Допустимые валюты: cron, gram."
+
+    await update_user_data(sender_id, sender_data)
+    await update_user_data(receiver_id, receiver_data)
+    return True, f"✅ Переведено {amount} {currency} пользователю {receiver_id}."
 
 async def handle_update(update):
-    global user_states
-
     if "message" in update:
         msg = update["message"]
         chat_id = msg["chat"]["id"]
         user_id = str(msg["from"]["id"])
+        username = msg["from"].get("username", msg["from"].get("first_name", "Гость"))
         text = msg.get("text", "")
-        username = msg["from"].get("username", "Без имени")
-        photo = msg.get("photo")
-        video = msg.get("video")
-        document = msg.get("document")
-        caption = msg.get("caption", "")
+        chat_type = msg["chat"]["type"]
 
-        # ---- /start ----
-        if text == "/start":
-            await send_message(chat_id, "👋 Добро пожаловать в конкурс-бот!\n"
-                                        "Выберите действие в меню ниже:",
-                              reply_markup=MAIN_KEYBOARD)
+        user_data = await get_user_data(user_id, username)
+        user_data, vip_bonus = await apply_vip_bonuses(user_id, user_data)
+        await update_user_data(user_id, user_data)
+
+        if vip_bonus:
+            await send_message(
+                chat_id,
+                f"👑 VIP-бонус ({vip_bonus['vip']})!\n"
+                f"💰 +{vip_bonus['cron']} cron и +{vip_bonus['gram']} gram\n"
+                f"⏳ Следующий VIP-бонус через {VIP_BONUSES[vip_bonus['vip']]['cooldown']} часов."
+            )
+
+        # ===== ИГРЫ (ТОЛЬКО ПО ПЕРВОМУ СЛОВУ, ТОЧНОЕ СОВПАДЕНИЕ) =====
+        game_played = False
+        lower_text = text.lower().strip()
+        words = lower_text.split()
+        if words:
+            cmd = words[0]
+            game_key = None
+            for key, game_data in GAMES.items():
+                if cmd in game_data["keywords"]:
+                    game_key = key
+                    break
+            if game_key:
+                bet = 100
+                if len(words) > 1:
+                    try:
+                        bet = int(words[1])
+                    except ValueError:
+                        bet = 100
+                await play_game(chat_id, user_id, game_key, bet)
+                game_played = True
+        if game_played:
             return
 
-        # ---- Управление доступом (только для главного админа) ----
-        if user_id == str(ADMIN_ID):
-            # Добавить админа
-            if text.startswith("/add_admin"):
+        # ===== АДМИН-КОМАНДЫ =====
+        if is_admin(user_id):
+            if text.startswith("/give_cron"):
                 parts = text.split()
-                if len(parts) < 2:
-                    await send_message(chat_id, "❌ Укажите ID: `/add_admin 123456789`")
+                if len(parts) < 3:
+                    await send_message(chat_id, "❌ Используйте: /give_cron ID количество")
                     return
-                new_admin = parts[1].strip()
-                allowed = await firebase_get("allowed_users") or {}
-                allowed[new_admin] = True
-                await firebase_set("allowed_users", allowed)
-                await send_message(chat_id, f"✅ Пользователь {new_admin} теперь имеет доступ к админ-командам.")
-                return
-
-            # Удалить админа
-            if text.startswith("/remove_admin"):
-                parts = text.split()
-                if len(parts) < 2:
-                    await send_message(chat_id, "❌ Укажите ID: `/remove_admin 123456789`")
-                    return
-                rm_admin = parts[1].strip()
-                allowed = await firebase_get("allowed_users") or {}
-                if rm_admin in allowed:
-                    del allowed[rm_admin]
-                    await firebase_set("allowed_users", allowed)
-                    await send_message(chat_id, f"✅ Пользователь {rm_admin} удалён из списка админов.")
-                else:
-                    await send_message(chat_id, f"❌ Пользователь {rm_admin} не найден в списке.")
-                return
-
-            # Список админов
-            if text == "/list_admins":
-                allowed = await firebase_get("allowed_users") or {}
-                if not allowed:
-                    await send_message(chat_id, "📋 Список разрешённых пользователей пуст.")
-                else:
-                    ids = list(allowed.keys())
-                    out = "📋 Разрешённые пользователи:\n" + "\n".join(ids)
-                    await send_message(chat_id, out)
-                return
-
-        # ---- Проверка доступа для остальных команд ----
-        is_admin_user = await is_admin(user_id)
-
-        # ---- /join contest_id ----
-        if text.startswith("/join"):
-            parts = text.split()
-            if len(parts) < 2:
-                await send_message(chat_id, "❌ Укажите ID конкурса: `/join contest_id`")
-                return
-            contest_id = parts[1]
-            contest = await firebase_get(f"contests/{contest_id}")
-            if not contest:
-                await send_message(chat_id, "❌ Конкурс не найден.")
-                return
-            if contest.get("status") != "active":
-                await send_message(chat_id, "❌ Конкурс уже завершён.")
-                return
-            participants = contest.get("participants", {})
-            if user_id not in participants:
-                participants[user_id] = username
-                await firebase_set(f"contests/{contest_id}/participants", participants)
-                await send_message(chat_id, f"✅ Вы участвуете в конкурсе {contest_id}!")
-            else:
-                await send_message(chat_id, "Вы уже участвуете в этом конкурсе.")
-            return
-
-        # ---- /clear_contests (админ) ----
-        if text == "/clear_contests" and is_admin_user:
-            await firebase_delete("contests")
-            await send_message(chat_id, "🗑 Все конкурсы удалены.")
-            return
-
-        # ---- /results (админ) ----
-        if text.startswith("/results") and is_admin_user:
-            parts = text.split()
-            if len(parts) < 2:
-                await send_message(chat_id, "❌ Укажите ID конкурса: `/results contest_id`")
-                return
-            contest_id = parts[1]
-            contest = await firebase_get(f"contests/{contest_id}")
-            if not contest:
-                await send_message(chat_id, "❌ Конкурс не найден.")
-                return
-            if contest.get("status") != "active":
-                await send_message(chat_id, "❌ Конкурс уже завершён.")
-                return
-            participants = contest.get("participants", {})
-            if not participants:
-                await send_message(chat_id, "❌ Нет участников.")
-                return
-            winners_count = contest.get("winners_count", 1)
-            winner_ids = random.sample(list(participants.keys()), min(winners_count, len(participants)))
-            winners = {uid: participants[uid] for uid in winner_ids}
-            await firebase_set(f"contests/{contest_id}/status", "finished")
-            await firebase_set(f"contests/{contest_id}/winner", winners)
-
-            result_text = f"🏁 **Итоги конкурса {contest_id}**\n\n"
-            result_text += f"Участников: {len(participants)}\n"
-            result_text += "Победители:\n"
-            for uid, uname in winners.items():
-                result_text += f"@{uname} (ID {uid})\n"
-            await send_message(chat_id, result_text)
-            for uid in winner_ids:
+                target_id = parts[1].strip()
                 try:
-                    await send_message(uid, f"🎉 Поздравляем! Вы выиграли конкурс {contest_id}!")
+                    amount = int(parts[2])
+                except:
+                    await send_message(chat_id, "❌ Сумма должна быть числом")
+                    return
+                target_data = await get_user_data(target_id)
+                target_data["balance_cron"] = target_data.get("balance_cron", 0) + amount
+                await update_user_data(target_id, target_data)
+                await send_message(chat_id, f"✅ Выдано {amount} cron пользователю {target_id}")
+                return
+
+            if text.startswith("/take_cron"):
+                parts = text.split()
+                if len(parts) < 3:
+                    await send_message(chat_id, "❌ Используйте: /take_cron ID количество")
+                    return
+                target_id = parts[1].strip()
+                try:
+                    amount = int(parts[2])
+                except:
+                    await send_message(chat_id, "❌ Сумма должна быть числом")
+                    return
+                target_data = await get_user_data(target_id)
+                current = target_data.get("balance_cron", 0)
+                if current < amount:
+                    await send_message(chat_id, f"❌ У пользователя {target_id} недостаточно cron (есть {current})")
+                    return
+                target_data["balance_cron"] = current - amount
+                await update_user_data(target_id, target_data)
+                await send_message(chat_id, f"✅ Забрано {amount} cron у пользователя {target_id}")
+                return
+
+            if text.startswith("/give_gram"):
+                parts = text.split()
+                if len(parts) < 3:
+                    await send_message(chat_id, "❌ Используйте: /give_gram ID количество")
+                    return
+                target_id = parts[1].strip()
+                try:
+                    amount = int(parts[2])
+                except:
+                    await send_message(chat_id, "❌ Сумма должна быть числом")
+                    return
+                target_data = await get_user_data(target_id)
+                target_data["balance_gram"] = target_data.get("balance_gram", 0) + amount
+                await update_user_data(target_id, target_data)
+                await send_message(chat_id, f"✅ Выдано {amount} gram пользователю {target_id}")
+                return
+
+            if text.startswith("/take_gram"):
+                parts = text.split()
+                if len(parts) < 3:
+                    await send_message(chat_id, "❌ Используйте: /take_gram ID количество")
+                    return
+                target_id = parts[1].strip()
+                try:
+                    amount = int(parts[2])
+                except:
+                    await send_message(chat_id, "❌ Сумма должна быть числом")
+                    return
+                target_data = await get_user_data(target_id)
+                current = target_data.get("balance_gram", 0)
+                if current < amount:
+                    await send_message(chat_id, f"❌ У пользователя {target_id} недостаточно gram (есть {current})")
+                    return
+                target_data["balance_gram"] = current - amount
+                await update_user_data(target_id, target_data)
+                await send_message(chat_id, f"✅ Забрано {amount} gram у пользователя {target_id}")
+                return
+
+            if text == "/users":
+                users = await firebase_get("users")
+                if not users:
+                    await send_message(chat_id, "❌ Нет пользователей")
+                    return
+                out = "📋 Список пользователей:\n"
+                for uid, data in users.items():
+                    cron = data.get("balance_cron", 0)
+                    gram = data.get("balance_gram", 0)
+                    username_db = data.get("username", uid)
+                    out += f"{username_db} (ID: {uid}) | cron: {cron} | gram: {gram}\n"
+                await send_message(chat_id, out)
+                return
+
+        # ===== ПЕРЕВОД (команда /transfer) =====
+        if text.startswith("/transfer"):
+            parts = text.split()
+            if len(parts) != 4:
+                await send_message(chat_id, "❌ Используйте: /transfer ID валюта сумма (валюта: cron или gram)")
+                return
+            target_id = parts[1].strip()
+            currency = parts[2].lower()
+            try:
+                amount = int(parts[3])
+            except:
+                await send_message(chat_id, "❌ Сумма должна быть числом")
+                return
+
+            # Проверяем, существует ли получатель (создаём запись, если нет)
+            receiver_data = await firebase_get(f"users/{target_id}")
+            if not receiver_data:
+                # Создаём получателя с нулевым балансом
+                await get_user_data(target_id, "Неизвестный")
+            # Выполняем перевод
+            success, message = await transfer_funds(user_id, target_id, currency, amount)
+            await send_message(chat_id, message)
+            return
+
+        # ===== ОБЫЧНЫЕ КОМАНДЫ (только в личке) =====
+        if text == "/start":
+            bal_cron = user_data.get("balance_cron", 0)
+            bal_gram = user_data.get("balance_gram", 0)
+            vip = user_data.get("vip", "Нет")
+            reply = get_main_keyboard(user_id) if chat_type == "private" else None
+            await send_message(
+                chat_id,
+                f"👋 Привет, @{username}!\n"
+                f"💰 Баланс: {bal_cron} cron | {bal_gram} gram\n"
+                f"👑 VIP: {vip}\n\n"
+                "Выбери действие в меню:",
+                reply_markup=reply
+            )
+            return
+
+        if text == "👤 Профиль":
+            bal_cron = user_data.get("balance_cron", 0)
+            bal_gram = user_data.get("balance_gram", 0)
+            vip = user_data.get("vip", "Нет")
+            if is_admin(user_id):
+                vip_status = "Admin"
+            else:
+                vip_status = vip
+            vip_until = user_data.get("vip_until")
+            vip_active = False
+            if vip_until:
+                try:
+                    end_date = datetime.fromisoformat(vip_until)
+                    if datetime.now() < end_date:
+                        vip_active = True
                 except:
                     pass
+            vip_active_text = "Вип активен" if vip_active else "Нет"
+            until_str = vip_until[:16] if vip_until else "—"
+            reply = get_main_keyboard(user_id) if chat_type == "private" else None
+            await send_message(
+                chat_id,
+                f"👤 Профиль @{username}\n"
+                f"🆔 ID: {user_id}\n"
+                f"💰 Баланс: {bal_cron} cron | {bal_gram} gram\n"
+                f"👑 Статус: {vip_status}\n"
+                f"📅 Окончание VIP: {until_str}\n"
+                f"📅 Вип активен: {vip_active_text}",
+                reply_markup=reply
+            )
             return
 
-        # ---- Добавление канала (ожидание названия) ----
-        if user_id in user_states and user_states.get(user_id, {}).get("mode") == "add_channel":
-            channel_data = {
-                "name": text,
-                "type": "channel",
-                "added_at": datetime.now().isoformat()
+        if text == "📋 Команды":
+            reply = get_main_keyboard(user_id) if chat_type == "private" else None
+            await send_message(
+                chat_id,
+                "📋 Доступные команды:\n"
+                "/start – главное меню\n"
+                "/transfer ID валюта сумма – перевести cron или gram\n"
+                "В любом чате: бас 100, фут 50, дартс 200, тенис 150\n"
+                "Любое сообщение – показать баланс\n"
+                "Кнопки меню – для быстрых действий",
+                reply_markup=reply
+            )
+            return
+
+        if text == "🏆 Топ":
+            top_users = await get_top_users(limit=10)
+            if not top_users:
+                await send_message(chat_id, "❌ Нет пользователей для топа.")
+                return
+            out = "🏆 **Топ пользователей по gram**\n\n"
+            for idx, user in enumerate(top_users, 1):
+                out += f"{idx}. {user['username']} | gram: {user['gram']} | cron: {user['cron']}\n"
+            reply = get_main_keyboard(user_id) if chat_type == "private" else None
+            await send_message(chat_id, out, reply_markup=reply)
+            return
+
+        if text == "💎 Донат":
+            keyboard = {
+                "inline_keyboard": [
+                    [{"text": "🪙 Купить cron (1 = 10000 gram)", "callback_data": "buy_cron"}],
+                    [{"text": "👑 Купить VIP Gold (100 cron)", "callback_data": "buy_vip_Gold"}],
+                    [{"text": "👑 Купить VIP Diamond (250 cron)", "callback_data": "buy_vip_Diamond"}],
+                    [{"text": "👑 Купить VIP Rich (500 cron)", "callback_data": "buy_vip_Rich"}]
+                ]
             }
-            await firebase_push(f"channels/{user_id}/list", channel_data)
-            del user_states[user_id]
-            await send_message(chat_id, f"✅ Канал {text} добавлен!",
-                              reply_markup=MAIN_KEYBOARD)
-            await show_channels(chat_id, user_id)
+            await send_message(
+                chat_id,
+                "💎 Донат:\n"
+                "1 cron = 10000 gram\n"
+                "Пополнить баланс можно через @CronSupport (1 cron = 25 ⭐)\n\n"
+                "👑 VIP-статусы (дают бонусы каждый час, действуют 7 дней):\n"
+                "• Gold (100 cron) – 5 cron/час + 10k gram/час, шанс +5%\n"
+                "• Diamond (250 cron) – 15 cron/час + 25k gram/час, шанс +10%\n"
+                "• Rich (500 cron) – 25 cron/час + 50k gram/час, шанс +15%",
+                reply_markup=keyboard
+            )
             return
 
-        # ---- Создание конкурса (пошаговое, доступно только админам) ----
-        if is_admin_user and user_id in user_states and user_states.get(user_id, {}).get("mode") == "create_contest":
-            state = user_states[user_id]
-            step = state.get("step")
-            data = state.get("data", {})
+        # ----- НОВАЯ КНОПКА "💸 Перевести" -----
+        if text == "💸 Перевести":
+            await send_message(
+                chat_id,
+                "💸 **Перевод средств**\n\n"
+                "Используй команду:\n"
+                "`/transfer ID валюта сумма`\n\n"
+                "Примеры:\n"
+                "`/transfer 123456789 cron 50` – перевести 50 cron\n"
+                "`/transfer 987654321 gram 100` – перевести 100 gram\n\n"
+                "Валюта может быть `cron` или `gram`.\n"
+                "ID получателя можно узнать в его профиле.",
+                reply_markup=get_main_keyboard(user_id) if chat_type == "private" else None
+            )
+            return
 
-            if step == "text":
-                if photo:
-                    media_type = "photo"
-                    media_id = photo[-1]["file_id"]
-                    data["text"] = caption or text
-                elif video:
-                    media_type = "video"
-                    media_id = video["file_id"]
-                    data["text"] = caption or text
-                elif document and document.get("mime_type", "").startswith("image/"):
-                    media_type = "document"
-                    media_id = document["file_id"]
-                    data["text"] = caption or text
-                else:
-                    media_type = None
-                    media_id = None
-                    if text:
-                        data["text"] = text
-                    else:
-                        await send_message(chat_id, "❌ Отправьте текст конкурса (или подпись к медиа).")
-                        return
+        if text == "🎮 Игры":
+            reply = get_main_keyboard(user_id) if chat_type == "private" else None
+            await send_message(
+                chat_id,
+                "🎮 Игры доступны в любом чате!\n"
+                "Используйте команды:\n"
+                "бас 100 – баскетбол\n"
+                "фут 50 – футбол\n"
+                "дартс 200 – дартс\n"
+                "тенис 150 – теннис\n\n"
+                "Ставка указывается числом после команды.\n"
+                "Если не указать – ставка 100 gram.",
+                reply_markup=reply
+            )
+            return
 
-                data["media_type"] = media_type
-                data["media_id"] = media_id
-                state["step"] = "date_start"
-                user_states[user_id] = state
-                await send_message(chat_id, "📅 Введите дату начала конкурса.\n"
-                                            "Форматы: `ДД.ММ.ГГГГ ЧЧ:ММ` или `ДД.ММ.ГГГГ`\n"
-                                            "Если дата не нужна, отправьте `-`")
+        if text == "⚙️ Админ панель" and is_admin(user_id):
+            await send_message(
+                chat_id,
+                "⚙️ Админ-панель:\n"
+                "Выберите действие:",
+                reply_markup=ADMIN_PANEL
+            )
+            return
+
+        if text == "🎁 Бонус":
+            bal_gram = user_data.get("balance_gram", 0)
+            if is_admin(user_id):
+                new_bal = bal_gram + BONUS_AMOUNT_GRAM
+                user_data["balance_gram"] = new_bal
+                await update_user_data(user_id, user_data)
+                reply = get_main_keyboard(user_id) if chat_type == "private" else None
+                await send_message(
+                    chat_id,
+                    f"🎁 Админ-бонус! Ты получил {BONUS_AMOUNT_GRAM} gram!\n"
+                    f"💰 Новый баланс: {new_bal} gram",
+                    reply_markup=reply
+                )
                 return
 
-            if step == "date_start":
-                if text == "-":
-                    data["date_start"] = None
-                    data["date_end"] = None
-                    state["step"] = "winners"
-                    user_states[user_id] = state
-                    await send_message(chat_id, "🏆 Введите количество победителей (число):")
-                else:
-                    dt = parse_date(text)
-                    if dt:
-                        data["date_start"] = dt
-                        state["step"] = "date_end"
-                        user_states[user_id] = state
-                        await send_message(chat_id, "📅 Введите дату окончания конкурса.\n"
-                                                    "Форматы: `ДД.ММ.ГГГГ ЧЧ:ММ` или `ДД.ММ.ГГГГ`\n"
-                                                    "Если не нужно, отправьте `-`")
-                    else:
-                        await send_message(chat_id, "❌ Неверный формат. Используйте `ДД.ММ.ГГГГ ЧЧ:ММ` или `ДД.ММ.ГГГГ`.")
-                return
-
-            if step == "date_end":
-                if text == "-":
-                    data["date_end"] = None
-                    state["step"] = "winners"
-                    user_states[user_id] = state
-                    await send_message(chat_id, "🏆 Введите количество победителей (число):")
-                else:
-                    dt = parse_date(text)
-                    if dt:
-                        data["date_end"] = dt
-                        state["step"] = "winners"
-                        user_states[user_id] = state
-                        await send_message(chat_id, "🏆 Введите количество победителей (число):")
-                    else:
-                        await send_message(chat_id, "❌ Неверный формат. Используйте `ДД.ММ.ГГГГ ЧЧ:ММ` или `ДД.ММ.ГГГГ`.")
-                return
-
-            if step == "winners":
+            last_bonus = user_data.get("last_bonus")
+            if last_bonus:
                 try:
-                    winners_count = int(text)
-                    if winners_count < 1:
-                        raise ValueError
-                    data["winners_count"] = winners_count
-                    state["step"] = "prize"
-                    user_states[user_id] = state
-                    await send_message(chat_id, "🎁 Опишите призы (текст):")
+                    last_time = datetime.fromisoformat(last_bonus)
                 except:
-                    await send_message(chat_id, "❌ Введите целое число больше 0.")
-                return
-
-            if step == "prize":
-                data["prize"] = text
-                channels = await firebase_get(f"channels/{user_id}/list")
-                if channels:
-                    keyboard = {"inline_keyboard": []}
-                    for cid, cdata in channels.items():
-                        name = cdata.get("name", "Без названия")
-                        keyboard["inline_keyboard"].append([{"text": f"📢 {name}", "callback_data": f"publish_channel_{cid}"}])
-                    keyboard["inline_keyboard"].append([{"text": "💬 Опубликовать здесь (в личку)", "callback_data": "publish_here"}])
-                    state["step"] = "choose_channel"
-                    user_states[user_id] = state
-                    await send_message(chat_id, "📢 Выберите канал для публикации конкурса:", reply_markup=keyboard)
+                    last_time = datetime.now() - timedelta(hours=BONUS_INTERVAL_HOURS)
+                next_time = last_time + timedelta(hours=BONUS_INTERVAL_HOURS)
+                now = datetime.now()
+                if now >= next_time:
+                    new_bal = bal_gram + BONUS_AMOUNT_GRAM
+                    user_data["balance_gram"] = new_bal
+                    user_data["last_bonus"] = now.isoformat()
+                    await update_user_data(user_id, user_data)
+                    reply = get_main_keyboard(user_id) if chat_type == "private" else None
+                    await send_message(
+                        chat_id,
+                        f"🎁 Ты получил бонус {BONUS_AMOUNT_GRAM} gram!\n"
+                        f"💰 Новый баланс: {new_bal} gram\n"
+                        f"⏳ Следующий бонус через 12 часов.",
+                        reply_markup=reply
+                    )
                 else:
-                    state["step"] = "button_text"
-                    user_states[user_id] = state
-                    await send_message(chat_id, "📢 У вас нет добавленных каналов.\n"
-                                                "Конкурс будет опубликован здесь, в личных сообщениях.\n\n"
-                                                "🎉 Введите текст, который будет отображаться на кнопке.\n"
-                                                "По умолчанию: `Участвовать`",
-                                  reply_markup={
-                                      "inline_keyboard": [
-                                          [{"text": "🔹 Участвовать", "callback_data": "btn_text_Участвовать"}],
-                                          [{"text": "🔹 Участвую!", "callback_data": "btn_text_Участвую!"}],
-                                          [{"text": "🔹 Принять участие", "callback_data": "btn_text_Принять участие"}]
-                                      ]
-                                  })
-                return
-
-            if step == "choose_channel":
-                # обрабатывается в callback
-                pass
-
-            if step == "button_text":
-                data["button_text"] = text
-                state["step"] = "color"
-                user_states[user_id] = state
-                color_keyboard = {
-                    "inline_keyboard": [
-                        [{"text": "🟣 Фиолетовый", "callback_data": "btn_color_#6c5ce7"},
-                         {"text": "🟢 Зелёный", "callback_data": "btn_color_#4ade80"}],
-                        [{"text": "🔴 Красный", "callback_data": "btn_color_#f87171"},
-                         {"text": "🟡 Жёлтый", "callback_data": "btn_color_#fbbf24"}],
-                        [{"text": "🔵 Синий", "callback_data": "btn_color_#3b82f6"},
-                         {"text": "🟣 Пурпурный", "callback_data": "btn_color_#a855f7"}]
-                    ]
-                }
-                await send_message(chat_id, "🎨 Выберите цвет кнопки из вариантов ниже:",
-                                  reply_markup=color_keyboard)
-                return
-
-        # ===== КНОПКИ МЕНЮ =====
-        if text == "🎯 Создать конкурс":
-            if not await is_admin(user_id):
-                await send_message(chat_id, "❌ У вас нет прав для создания конкурсов.")
-                return
-            user_states[user_id] = {"mode": "create_contest", "step": "text", "data": {}}
-            await send_message(chat_id, "✍️ Отправьте текст конкурса.\n"
-                                        "Вы можете также отправить картинку, видео или GIF.\n"
-                                        "❗ Используйте только один медиафайл.\n\n"
-                                        "Если отправляете медиа, текст должен быть в подписи.",
-                              reply_markup={"inline_keyboard": [[{"text": "❌ Отмена", "callback_data": "cancel_contest"}]]})
+                    remaining = next_time - now
+                    hours = remaining.seconds // 3600
+                    minutes = (remaining.seconds % 3600) // 60
+                    reply = get_main_keyboard(user_id) if chat_type == "private" else None
+                    await send_message(
+                        chat_id,
+                        f"⏳ Следующий бонус через {hours}ч {minutes}мин.\n"
+                        f"💰 Баланс: {bal_gram} gram",
+                        reply_markup=reply
+                    )
+            else:
+                new_bal = bal_gram + BONUS_AMOUNT_GRAM
+                user_data["balance_gram"] = new_bal
+                user_data["last_bonus"] = datetime.now().isoformat()
+                await update_user_data(user_id, user_data)
+                reply = get_main_keyboard(user_id) if chat_type == "private" else None
+                await send_message(
+                    chat_id,
+                    f"🎁 Ты получил первый бонус {BONUS_AMOUNT_GRAM} gram!\n"
+                    f"💰 Новый баланс: {new_bal} gram\n"
+                    f"⏳ Следующий бонус через 12 часов.",
+                    reply_markup=reply
+                )
             return
 
-        if text == "📋 Мои конкурсы":
-            contests = await firebase_get("contests")
-            if not contests:
-                await send_message(chat_id, "❌ Конкурсов пока нет.")
-                return
-            # Получаем список разрешённых пользователей для проверки
-            allowed_users = await firebase_get("allowed_users") or {}
-            user_contests = {}
-            for cid, cdata in contests.items():
-                if user_id == str(ADMIN_ID) or user_id in allowed_users:
-                    user_contests[cid] = cdata
-                elif user_id in cdata.get("participants", {}):
-                    user_contests[cid] = cdata
-            if not user_contests:
-                await send_message(chat_id, "❌ Вы не участвуете ни в одном конкурсе.")
-                return
-            out = "📋 Ваши конкурсы:\n"
-            for cid, cdata in user_contests.items():
-                status = "✅ Активен" if cdata.get("status") == "active" else "🏁 Завершён"
-                participants_count = len(cdata.get("participants", {}))
-                date_end = cdata.get("date_end")
-                date_str = f", окончание: {format_date(date_end)}" if date_end else ""
-                out += f"ID: `{cid}` – {status}, участников: {participants_count}{date_str}\n"
-            await send_message(chat_id, out)
+        if text == "💬 Чаты":
+            reply = get_main_keyboard(user_id) if chat_type == "private" else None
+            await send_message(
+                chat_id,
+                "💬 Наш чат: @CronChat\n"
+                "Присоединяйся к общению!",
+                reply_markup=reply
+            )
             return
 
-        if text == "📢 Мои каналы/чаты":
-            await show_channels(chat_id, user_id)
+        if text == "💰 Заработать":
+            earned = user_data.get("earned_channels", {})
+            keyboard = {"inline_keyboard": []}
+            for channel in CHANNELS:
+                name = channel["name"]
+                if earned.get(name):
+                    status = "✅ уже получено"
+                else:
+                    status = "➕ получить 2500 gram"
+                keyboard["inline_keyboard"].append([
+                    {"text": f"{name} – {status}", "callback_data": f"earn_{name}"}
+                ])
+                keyboard["inline_keyboard"].append([
+                    {"text": f"✅ Я подписался на {name} (вручную)", "callback_data": f"earn_manual_{name}"}
+                ])
+            await send_message(
+                chat_id,
+                "💰 Заработай 2500 gram за подписку на каналы!",
+                reply_markup=keyboard
+            )
             return
 
-        if text == "🆘 Служба поддержки":
-            await send_message(chat_id, "🆘 По всем вопросам обращайтесь в поддержку:\n"
-                                        "📩 @RandomSupport")
+        # ===== БАЛАНС (если не команда) =====
+        if not text.startswith("/"):
+            bal_cron = user_data.get("balance_cron", 0)
+            bal_gram = user_data.get("balance_gram", 0)
+            reply = get_main_keyboard(user_id) if chat_type == "private" else None
+            await send_message(
+                chat_id,
+                f"@{username}: {bal_cron} cron | {bal_gram} gram",
+                reply_markup=reply
+            )
             return
 
-        if text and not text.startswith("/"):
-            await send_message(chat_id, "⚠️ Неизвестная команда. Используйте кнопки меню.",
-                              reply_markup=MAIN_KEYBOARD)
+        await send_message(
+            chat_id,
+            "⚠️ Неизвестная команда. Используйте кнопки меню."
+        )
 
-    # ---- ОБРАБОТКА CALLBACK ----
+    # ---- CALLBACK ----
     if "callback_query" in update:
         cb = update["callback_query"]
         cb_data = cb["data"]
         user_id = str(cb["from"]["id"])
-        username = cb["from"].get("username", "Без имени")
         chat_id = cb["message"]["chat"]["id"]
 
-        if cb_data == "cancel_contest":
-            if user_id in user_states:
-                del user_states[user_id]
-            await send_message(chat_id, "❌ Создание конкурса отменено.",
-                              reply_markup=MAIN_KEYBOARD)
+        if cb_data == "admin_give_cron" and is_admin(user_id):
+            await send_message(chat_id, "Введите: `/give_cron ID количество`")
             return
-
-        if cb_data.startswith("publish_channel_"):
-            channel_id = cb_data[17:]
-            if user_id in user_states and user_states.get(user_id, {}).get("mode") == "create_contest":
-                state = user_states[user_id]
-                if state.get("step") == "choose_channel":
-                    state["data"]["channel_id"] = channel_id
-                    state["step"] = "button_text"
-                    user_states[user_id] = state
-                    await send_message(chat_id, "🎉 Введите текст, который будет отображаться на кнопке.\n"
-                                                "По умолчанию: `Участвовать`\n"
-                                                "Вы также можете добавить премиум эмодзи в начале текста.",
-                                      reply_markup={
-                                          "inline_keyboard": [
-                                              [{"text": "🔹 Участвовать", "callback_data": "btn_text_Участвовать"}],
-                                              [{"text": "🔹 Участвую!", "callback_data": "btn_text_Участвую!"}],
-                                              [{"text": "🔹 Принять участие", "callback_data": "btn_text_Принять участие"}]
-                                          ]
-                                      })
+        if cb_data == "admin_take_cron" and is_admin(user_id):
+            await send_message(chat_id, "Введите: `/take_cron ID количество`")
             return
-
-        if cb_data == "publish_here":
-            if user_id in user_states and user_states.get(user_id, {}).get("mode") == "create_contest":
-                state = user_states[user_id]
-                if state.get("step") == "choose_channel":
-                    state["data"]["channel_id"] = None
-                    state["step"] = "button_text"
-                    user_states[user_id] = state
-                    await send_message(chat_id, "🎉 Введите текст, который будет отображаться на кнопке.\n"
-                                                "По умолчанию: `Участвовать`\n"
-                                                "Вы также можете добавить премиум эмодзи в начале текста.",
-                                      reply_markup={
-                                          "inline_keyboard": [
-                                              [{"text": "🔹 Участвовать", "callback_data": "btn_text_Участвовать"}],
-                                              [{"text": "🔹 Участвую!", "callback_data": "btn_text_Участвую!"}],
-                                              [{"text": "🔹 Принять участие", "callback_data": "btn_text_Принять участие"}]
-                                          ]
-                                      })
+        if cb_data == "admin_give_gram" and is_admin(user_id):
+            await send_message(chat_id, "Введите: `/give_gram ID количество`")
             return
-
-        if cb_data.startswith("btn_text_"):
-            text = cb_data[9:]
-            if user_id in user_states and user_states.get(user_id, {}).get("mode") == "create_contest":
-                state = user_states[user_id]
-                if state.get("step") == "button_text":
-                    state["data"]["button_text"] = text
-                    state["step"] = "color"
-                    user_states[user_id] = state
-                    color_keyboard = {
-                        "inline_keyboard": [
-                            [{"text": "🟣 Фиолетовый", "callback_data": "btn_color_#6c5ce7"},
-                             {"text": "🟢 Зелёный", "callback_data": "btn_color_#4ade80"}],
-                            [{"text": "🔴 Красный", "callback_data": "btn_color_#f87171"},
-                             {"text": "🟡 Жёлтый", "callback_data": "btn_color_#fbbf24"}],
-                            [{"text": "🔵 Синий", "callback_data": "btn_color_#3b82f6"},
-                             {"text": "🟣 Пурпурный", "callback_data": "btn_color_#a855f7"}]
-                        ]
-                    }
-                    await send_message(chat_id, f"✅ Текст кнопки: `{text}`\n\n🎨 Выберите цвет кнопки:",
-                                      reply_markup=color_keyboard)
+        if cb_data == "admin_take_gram" and is_admin(user_id):
+            await send_message(chat_id, "Введите: `/take_gram ID количество`")
             return
-
-        if cb_data.startswith("btn_color_"):
-            color_hex = cb_data[10:]
-            if user_id in user_states and user_states.get(user_id, {}).get("mode") == "create_contest":
-                state = user_states[user_id]
-                data = state.get("data", {})
-                if state.get("step") == "color":
-                    data["button_color"] = color_hex
-                    contest_data = {
-                        "text": data.get("text", ""),
-                        "media_type": data.get("media_type"),
-                        "media_id": data.get("media_id"),
-                        "date_start": data.get("date_start").isoformat() if data.get("date_start") else None,
-                        "date_end": data.get("date_end").isoformat() if data.get("date_end") else None,
-                        "winners_count": data.get("winners_count", 1),
-                        "prize": data.get("prize", ""),
-                        "button_text": data.get("button_text", "Участвовать"),
-                        "button_color": color_hex,
-                        "channel_id": data.get("channel_id"),
-                        "status": "active",
-                        "participants": {},
-                        "winner": None,
-                        "created_at": datetime.now().isoformat(),
-                        "created_by": user_id
-                    }
-                    await publish_contest(chat_id, user_id, contest_data)
-                    del user_states[user_id]
-                    await send_message(chat_id, "✅ Конкурс создан и опубликован!",
-                                      reply_markup=MAIN_KEYBOARD)
-            return
-
-        if cb_data.startswith("join_"):
-            contest_id = cb_data[5:]
-            contest = await firebase_get(f"contests/{contest_id}")
-            if not contest:
-                await send_message(chat_id, "❌ Конкурс не найден.")
+        if cb_data == "admin_users" and is_admin(user_id):
+            users = await firebase_get("users")
+            if not users:
+                await send_message(chat_id, "❌ Нет пользователей")
                 return
-            if contest.get("status") != "active":
-                await send_message(chat_id, "❌ Конкурс уже завершён.")
-                return
-            participants = contest.get("participants", {})
-            if user_id not in participants:
-                participants[user_id] = username
-                await firebase_set(f"contests/{contest_id}/participants", participants)
-                await send_message(chat_id, f"✅ Вы участвуете в конкурсе {contest_id}!")
+            out = "📋 Список пользователей:\n"
+            for uid, data in users.items():
+                cron = data.get("balance_cron", 0)
+                gram = data.get("balance_gram", 0)
+                username_db = data.get("username", uid)
+                out += f"{username_db} (ID: {uid}) | cron: {cron} | gram: {gram}\n"
+            await send_message(chat_id, out)
+            return
+        if cb_data == "admin_delete_db" and is_admin(user_id):
+            confirm_keyboard = {
+                "inline_keyboard": [
+                    [{"text": "✅ Да, снести всё", "callback_data": "admin_confirm_delete"}],
+                    [{"text": "❌ Отмена", "callback_data": "admin_close"}]
+                ]
+            }
+            await send_message(chat_id, "⚠️ Вы уверены, что хотите удалить ВСЕ данные пользователей? Это действие необратимо!", reply_markup=confirm_keyboard)
+            return
+        if cb_data == "admin_confirm_delete" and is_admin(user_id):
+            await firebase_delete("users")
+            await send_message(chat_id, "✅ База данных полностью очищена.")
+            await send_message(chat_id, "Админ-панель закрыта.")
+            return
+        if cb_data == "admin_close":
+            await send_message(chat_id, "✅ Админ-панель закрыта.")
+            return
+
+        if cb_data == "buy_cron":
+            user_data = await get_user_data(user_id)
+            bal_gram = user_data.get("balance_gram", 0)
+            if bal_gram >= CRON_TO_GRAM:
+                user_data["balance_gram"] = bal_gram - CRON_TO_GRAM
+                user_data["balance_cron"] = user_data.get("balance_cron", 0) + 1
+                await update_user_data(user_id, user_data)
+                await send_message(chat_id, f"✅ Ты купил 1 cron за {CRON_TO_GRAM} gram!")
             else:
-                await send_message(chat_id, "Вы уже участвуете в этом конкурсе.")
+                await send_message(chat_id, f"❌ Недостаточно gram. Нужно {CRON_TO_GRAM} gram.")
             return
 
-        if cb_data == "add_channel":
-            user_states[user_id] = {"mode": "add_channel"}
-            await send_message(chat_id, "📢 Введите название канала в формате @channelname\n"
-                                        "Или перешлите сообщение из приватного канала.",
-                              reply_markup=MAIN_KEYBOARD)
+        if cb_data.startswith("buy_vip_"):
+            vip_type = cb_data[8:]
+            price = VIP_PRICES[vip_type]
+            user_data = await get_user_data(user_id)
+            bal_cron = user_data.get("balance_cron", 0)
+            if bal_cron < price:
+                await send_message(chat_id, f"❌ Недостаточно cron. Нужно {price} cron.")
+                return
+            user_data["balance_cron"] = bal_cron - price
+            user_data["vip"] = vip_type
+            user_data["vip_until"] = (datetime.now() + timedelta(days=VIP_DURATION_DAYS)).isoformat()
+            user_data["last_vip_claim"] = datetime.now().isoformat()
+            user_data["last_bonus"] = datetime.now().isoformat()
+            vip_info = VIP_BONUSES[vip_type]
+            user_data["balance_cron"] = user_data.get("balance_cron", 0) + vip_info["cron"]
+            user_data["balance_gram"] = user_data.get("balance_gram", 0) + vip_info["gram"]
+            await update_user_data(user_id, user_data)
+            await send_message(
+                chat_id,
+                f"👑 Поздравляем! Ты купил VIP {vip_type} на {VIP_DURATION_DAYS} дней!\n\n"
+                f"📋 Привилегии:\n"
+                f"• {vip_info['cron']} cron и {vip_info['gram']} gram каждые {vip_info['cooldown']} часов\n"
+                f"• Шанс в играх +{int(vip_info['luck']*100)}%\n\n"
+                f"💰 Ты получил первый VIP-бонус: +{vip_info['cron']} cron и +{vip_info['gram']} gram\n"
+                f"⏳ Следующий VIP-бонус через {vip_info['cooldown']} часов.\n"
+                f"⏳ Таймер обычного бонуса сброшен."
+            )
             return
 
-        if cb_data == "add_group":
-            user_states[user_id] = {"mode": "add_channel"}
-            await send_message(chat_id, "📢 Введите название группы в формате @groupname\n"
-                                        "Или перешлите сообщение из группы.",
-                              reply_markup=MAIN_KEYBOARD)
+        if cb_data.startswith("game_"):
+            game_key = cb_data[5:]
+            await play_game(chat_id, user_id, game_key, 100)
             return
 
-        if cb_data.startswith("del_channel_"):
-            channel_id = cb_data[12:]
-            await firebase_delete(f"channels/{user_id}/list/{channel_id}")
-            await send_message(chat_id, "🗑 Канал удалён.")
-            await show_channels(chat_id, user_id)
+        if cb_data.startswith("earn_"):
+            channel_name = cb_data[5:]
+            channel_id = None
+            for ch in CHANNELS:
+                if ch["name"] == channel_name:
+                    channel_id = ch["id"]
+                    break
+            if not channel_id:
+                await send_message(chat_id, "❌ Канал не найден.")
+                return
+            is_sub = await check_subscription(user_id, channel_id)
+            if is_sub:
+                user_data = await get_user_data(user_id)
+                earned = user_data.get("earned_channels", {})
+                if earned.get(channel_name):
+                    await send_message(chat_id, f"✅ Ты уже получил бонус за {channel_name}.")
+                    return
+                bal_gram = user_data.get("balance_gram", 0)
+                new_bal = bal_gram + EARN_AMOUNT_GRAM
+                user_data["balance_gram"] = new_bal
+                earned[channel_name] = True
+                user_data["earned_channels"] = earned
+                await update_user_data(user_id, user_data)
+                await send_message(
+                    chat_id,
+                    f"✅ Ты получил {EARN_AMOUNT_GRAM} gram за подписку на {channel_name}!\n"
+                    f"💰 Новый баланс gram: {new_bal}"
+                )
+            else:
+                await send_message(
+                    chat_id,
+                    f"❌ Ты не подписан на {channel_name}. Подпишись и нажми снова.\n"
+                    f"Ссылка: https://t.me/{channel_name}"
+                )
             return
 
-# ===== ПОЛЛИНГ =====
+        if cb_data.startswith("earn_manual_"):
+            channel_name = cb_data[12:]
+            user_data = await get_user_data(user_id)
+            earned = user_data.get("earned_channels", {})
+            if earned.get(channel_name):
+                await send_message(chat_id, f"✅ Ты уже получил бонус за {channel_name}.")
+                return
+            bal_gram = user_data.get("balance_gram", 0)
+            new_bal = bal_gram + EARN_AMOUNT_GRAM
+            user_data["balance_gram"] = new_bal
+            earned[channel_name] = True
+            user_data["earned_channels"] = earned
+            await update_user_data(user_id, user_data)
+            await send_message(
+                chat_id,
+                f"✅ Ты получил {EARN_AMOUNT_GRAM} gram за {channel_name} (ручное подтверждение)!\n"
+                f"💰 Новый баланс gram: {new_bal}"
+            )
+            return
+
 async def poll_updates():
     offset = 0
     async with aiohttp.ClientSession() as session:
@@ -694,12 +850,12 @@ async def poll_updates():
                             offset = update["update_id"] + 1
                             await handle_update(update)
                     else:
-                        print("Ошибка:", data)
+                        print("[ERROR] Ошибка получения обновлений:", data)
                         await asyncio.sleep(2)
             except Exception as e:
-                print("Ошибка:", e)
+                print("[ERROR] Ошибка в polling:", e)
                 await asyncio.sleep(2)
 
 if __name__ == "__main__":
-    print("🎯 Конкурс-бот (финальная версия) запущен (FlashGram).")
+    print("[LOG] Бот с играми, VIP, переводом и точным распознаванием запущен.")
     asyncio.run(poll_updates())
