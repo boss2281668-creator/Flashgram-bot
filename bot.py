@@ -5,9 +5,9 @@ import random
 import sys
 from datetime import datetime, timedelta
 
-# ---------- ТВОЙ НОВЫЙ ТОКЕН (ВРЕМЕННО) ----------
+# ---------- ВАШИ НАСТРОЙКИ ----------
 TOKEN = "1780244992:JTLJRwQM5F_dUbEG4WauZBYznNqSFNzmnE5"
-API_BASE = "https://api.telegram.org"
+API_BASE = "http://31.76.29.36:8081"          # <-- ВЕРНУЛ СТАРЫЙ АДРЕС
 FIREBASE_URL = "https://nft-app-8eda5-default-rtdb.firebaseio.com"
 
 ADMIN_IDS = ["1780243448", "1780243287"]
@@ -73,7 +73,7 @@ def get_main_keyboard(user_id):
         keyboard.insert(2, ["⚙️ Админ панель"])
     return {"keyboard": keyboard, "resize_keyboard": True, "one_time_keyboard": False}
 
-# ---------- БЕЗОПАСНЫЕ ЗАПРОСЫ К API ----------
+# ---------- ЗАПРОСЫ К API (С ВАШИМ СЕРВЕРОМ) ----------
 async def send_message(chat_id, text, reply_markup=None):
     url = f"{API_BASE}/bot{TOKEN}/sendMessage"
     payload = {"chat_id": chat_id, "text": text}
@@ -117,7 +117,7 @@ async def firebase_delete(path):
         print(f"[ERROR] firebase_delete({path}) failed: {e}")
         return None
 
-# ---------- ОСТАЛЬНЫЕ ФУНКЦИИ ----------
+# ---------- ОСТАЛЬНЫЕ ФУНКЦИИ (VIP, ИГРЫ, ПЕРЕВОД) ----------
 async def check_vip_expiry(user_data):
     vip_until = user_data.get("vip_until")
     if vip_until:
@@ -293,7 +293,7 @@ async def transfer_funds(sender_id, receiver_id, currency, amount):
     await update_user_data(receiver_id, receiver_data)
     return True, f"✅ Переведено {amount} {currency} пользователю {receiver_id}."
 
-# ---------- ГЛАВНЫЙ ОБРАБОТЧИК (ЗАЩИЩЁН ОТ ОШИБОК) ----------
+# ---------- ГЛАВНЫЙ ОБРАБОТЧИК (ВЕСЬ ОСТАЛЬНОЙ КОД) ----------
 async def handle_update(update):
     try:
         if "message" in update:
@@ -316,7 +316,7 @@ async def handle_update(update):
                     f"⏳ Следующий VIP-бонус через {VIP_BONUSES[vip_bonus['vip']]['cooldown']} часов."
                 )
 
-            # ===== ИГРЫ =====
+            # ===== ИГРЫ (ТОЛЬКО ПО ПЕРВОМУ СЛОВУ) =====
             game_played = False
             lower_text = text.lower().strip()
             words = lower_text.split()
@@ -858,7 +858,7 @@ async def handle_update(update):
         except:
             pass
 
-# ---------- ГЛАВНЫЙ ЦИКЛ ----------
+# ---------- ГЛАВНЫЙ ЦИКЛ ПОЛЛИНГА ----------
 async def poll_updates():
     offset = 0
     while True:
@@ -883,5 +883,5 @@ async def poll_updates():
             await asyncio.sleep(10)
 
 if __name__ == "__main__":
-    print("[LOG] Бот запускается...")
+    print("[LOG] Бот с вашим старым API_BASE запущен.")
     asyncio.run(poll_updates())
